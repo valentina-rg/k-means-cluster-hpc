@@ -195,9 +195,15 @@ void classify( void )
     for (int j=0; j<n_clusters; j++) {
         counts[j] = 0;
     }
-    //int *counts_local = calloc(n_threads * n_clusters, sizeof(int));
-    #pragma omp parallel for
+    #pragma omp parallel
+    {
+
+    int *counts_local = calloc(n_clusters, sizeof(int));
+
+    #pragma omp for
     for (int i=0; i<n_points; i++) {
+
+
         /* Index and squared distance of the nearest centroid. */
         int nearest = 0;
         float mindist = sqdist( &data[IDX(i,0)], &centroids[IDX(nearest, 0)] );
@@ -208,11 +214,26 @@ void classify( void )
                 nearest = j;
             }
         }
+
         /* assign the point to the nearest centroid, and update the
            cluster size. */
         cluster_of[i] = nearest;
-        counts[nearest]++;
+        counts_local[nearest]++;
+
+
     }
+
+            #pragma omp critical
+        {
+            for (int j = 0; j < n_clusters; j++) {
+                counts[j] += counts_local[j];
+            }
+        }
+
+        free(counts_local);
+
+   }
+    
 }
 
 /* Update the centroids. Set the centroid of each cluster to the
