@@ -1,0 +1,12 @@
+Questo archivio contiene il materiale per il progetto del corso di
+High Performance Computing, laurea in Ingegneria e Scienze
+Informatiche, Università di Bologna, campus di Cesena, AA 2025/2026.
+
+Il file README (questo file) dovrà includere le istruzioni per la
+compilazione e l'esecuzione dei programmi consegnati; per comodità,
+nella directory src/ è presente un Makefile per compilare il codice
+fornito. Chi lo desidera può modificarlo per compilare i programmi
+consegnati, oppure non usarlo ed effettuare la compilazione
+manualmente. In tal caso specificare in questo file i comandi
+necessari per la compilazione.
+
