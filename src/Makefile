@@ -8,11 +8,14 @@
 ## Last modified on 2025-12-03 by Moreno Marzolla
 
 CFLAGS+=-std=c99 -Wall -Wpedantic
-EXES:=k-means inputgen
+EXES:=k-means omp-k-means inputgen
 
 .PHONY: demo clean
 
 ALL: $(EXES)
+
+omp-k-means: omp-k-means.c
+	$(CC) $(CFLAGS) omp-k-means.c -o omp-k-means
 
 demo:
 	$(CC) $(CFLAGS) -DMAKE_MOVIE k-means.c -o k-means

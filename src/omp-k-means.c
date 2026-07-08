@@ -242,32 +242,59 @@ void classify( void )
    all centroids. */
 float update_centroids( void )
 {
-    for (int j=0; j<n_clusters; j++) {
-        vzero( &new_centroids[IDX(j, 0)] );
+    for (int i = 0; i < n_clusters; i++) {
+        vzero(&new_centroids[IDX(i, 0)]);
     }
 
-    for (int i=0; i<n_points; i++) {
-        vadd( &new_centroids[IDX(cluster_of[i], 0)], &data[IDX(i, 0)] );
+    #pragma omp parallel
+    {
+        float *local_new_centroids = calloc(n_clusters * n_dims, sizeof(float));
+
+        #pragma omp for
+        for (int j = 0; j < n_points; j++) {
+            int c = cluster_of[j];
+
+            if (c >= 0 && c < n_clusters) {
+                for (int z = 0; z < n_dims; z++) {
+                    local_new_centroids[IDX(c, z)] += data[IDX(j, z)];
+                }
+            }
+        }
+
+        #pragma omp critical
+        {
+            for (int k = 0; k < n_clusters; k++) {
+                for (int z = 0; z < n_dims; z++) {
+                    new_centroids[IDX(k, z)] += local_new_centroids[IDX(k, z)];
+                }
+            }
+        }
+
+        free(local_new_centroids);
     }
 
     float maxsqshift = 0.0f;
-    for (int j=0; j<n_clusters; j++) {
+
+    for (int j = 0; j < n_clusters; j++) {
         /* If a cluster is empty, we simply copy the old centroid to
            the new one. */
         if (counts[j] == 0) {
-            vcopy( &new_centroids[IDX(j,0)], &centroids[IDX(j,0)] );
+            vcopy(&new_centroids[IDX(j, 0)], &centroids[IDX(j, 0)]);
         } else {
-            vmul( &new_centroids[IDX(j, 0)], 1.0f/counts[j] );
+            vmul(&new_centroids[IDX(j, 0)], 1.0f / counts[j]);
         }
-        const float sqshift = sqdist( &centroids[IDX(j, 0)], &new_centroids[IDX(j, 0)] );
+
+        const float sqshift = sqdist(&centroids[IDX(j, 0)],
+                                     &new_centroids[IDX(j, 0)]);
+
         if (sqshift > maxsqshift)
             maxsqshift = sqshift;
-        vcopy( &centroids[IDX(j, 0)], &new_centroids[IDX(j, 0)] );
+
+        vcopy(&centroids[IDX(j, 0)], &new_centroids[IDX(j, 0)]);
     }
 
     return maxsqshift;
 }
-
 /******************************************************************************
  **
  ** Input/output functions. DO NOT parallelize them.
