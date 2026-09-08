@@ -4,7 +4,7 @@
 
 /****************************************************************************
  *
- * k-means.c -- Implementation of the K-Means clustering algorithm.
+ * omp-k-means.c -- OpenMP implementation of the K-Means clustering algorithm.
  *
  * Copyright (C) 2025 Moreno Marzolla <https://unibo.it/sitoweb/moreno.marzolla/>
  *
@@ -25,28 +25,15 @@
  *
  * Compile with:
  *
- *      gcc -std=c99 -Wall -Wpedantic k-means.c -o k-means
+ *      gcc -std=c99 -Wall -Wpedantic -fopenmp omp-k-means.c -o omp-k-means
  *
  * Run with:
  *
- *      ./k-means K input_file output_file
+ *      ./omp-k-means K input_file output_file
  *
  * Example:
- *
- *      ./k-means 5 demo.in demo.out
- *
- * To generate a movie, you need gnuplot and ffmpeg (the following
- * commands will generate a lot of temporary files):
- *
- *      # compile enabling generation of intermediate results
- *      gcc -DMAKE_MOVIE -std=c99 -Wall -Wpedantic k-means.c -o k-means
- *      # run the program
- *      ./k-means 5 demo.in demo.out
- *      # generate frames
- *      ./generate_frames.sh
- *      # assemble the frames to produce the file "demo.mp4"
- *      ffmpeg -pattern_type glob -stream_loop 5 -y -r 1 -i "img_*.png" -vcodec mpeg4 -r 1 demo.mp4
- *
+
+ *      ./omp-k-means 5 demo.in demo.out
  ****************************************************************************/
 
 /* Enable POSIX extensions that are required for using
@@ -192,6 +179,7 @@ void init_centroids( void )
    the `counts` array. */
 void classify( void )
 {
+#pragma omp for
     for (int j=0; j<n_clusters; j++) {
         counts[j] = 0;
     }
@@ -233,7 +221,8 @@ void classify( void )
         free(counts_local);
 
    }
-    
+#pragma omp barrier
+
 }
 
 /* Update the centroids. Set the centroid of each cluster to the
@@ -242,6 +231,8 @@ void classify( void )
    all centroids. */
 float update_centroids( void )
 {
+#pragma omp single
+
     for (int i = 0; i < n_clusters; i++) {
         vzero(&new_centroids[IDX(i, 0)]);
     }
@@ -489,21 +480,38 @@ int main( int argc, char *argv[] )
     float maxsqshift;
     int iter = 0;
     const double tstart = hpc_gettime();
-    do {
-        classify();
-        /* The following lines are useful only if you want to generate
-           a movie of the evolution of the algorithm; if you are
-           taking times for performance evaluation purposes, remove
-           these lines, otherwise the time will be dominated by I/O
-           operations. */
+
+   #pragma omp parallel
+    {
+
+        int   *counts_local        = (int  *)safe_malloc(n_clusters * sizeof(int));
+        float *local_new_centroids = (float*)safe_malloc(n_clusters * n_dims * sizeof(float));
+
+        do {
+            classify();
+
 #ifdef MAKE_MOVIE
-        save_centroids(iter);
-        save_clusters(iter);
+
+#pragma omp single
+            {
+                save_centroids(iter);
+                save_clusters(iter);
+            }
 #endif
-        maxsqshift = update_centroids();
-        printf("Iteration %3d, maxsqshift = %f\n", iter, maxsqshift);
-        iter++;
-    } while ( (maxsqshift > TOL*TOL) && (iter <= MAXITER) );
+
+            update_centroids();
+
+#pragma omp single
+            {
+                printf("Iteration %3d, maxsqshift = %f\n", iter, maxsqshift);
+                iter++;
+            }
+        } while ( (maxsqshift > TOL*TOL) && (iter <= MAXITER) );
+
+        free(counts_local);
+        free(local_new_centroids);
+    }
+
     const double elapsed = hpc_gettime() - tstart;
 
     printf("\nMain loop completed\n");
@@ -515,8 +523,10 @@ int main( int argc, char *argv[] )
 
     free(data);
     free(centroids);
+    free(new_centroids);
     free(cluster_of);
     free(counts);
 
     return EXIT_SUCCESS;
 }
+
