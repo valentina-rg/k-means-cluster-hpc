@@ -88,7 +88,7 @@ int *local_cluster_of;
    fails. */
 void *safe_malloc(size_t size)
 {
-    void *result = malloc(size);
+    void *result = malloc(size > 0 ? size : 1);
     assert(result != NULL);
     return result;
 }
@@ -177,20 +177,23 @@ void init_centroids(void)
     }
 }
 
-/* Assign each data point to the nearest centroid. Updates
-   the `counts` array. */
+/****
+*
+fase di assegnazione. per ogni punto contenuto in local_data viene calcolata la distanza
+al quadrato da tutti i centroidi, viene scelto quello con distanza minima, viene memorizzato
+l'id del cluster in local_cluster e viene incrementato local_counts.
+*****/
 void classify(int my_size, int my_rank)
 {
-    for (int j = 0; j < n_clusters; j++)
-    {
+  //azzeramento dei contatori locali
+    for (int j = 0; j < n_clusters; j++){
         local_counts[j] = 0;
     }
-
-    for (int i = 0; i < my_size; i++)
-    {
-        /* Index and squared distance of the nearest centroid. */
+	//si inizia a scorrere tutti i punti assegnati
+    for (int i = 0; i < my_size; i++){
         int nearest = 0;
         float mindist = sqdist(&local_data[IDX(i, 0)], &centroids[IDX(nearest, 0)]);
+        //confronto con tutti gli altri centroidi
         for (int j = 1; j < n_clusters; j++)
         {
             const float dist = sqdist(&local_data[IDX(i, 0)], &centroids[IDX(j, 0)]);
@@ -200,30 +203,31 @@ void classify(int my_size, int my_rank)
                 nearest = j;
             }
         }
-        /* assign the point to the nearest centroid, and update the
-           cluster size. */
+        //assegnazione del punto al cluster trovato e viene aggiornato il conteggio locale
         local_cluster_of[i] = nearest;
         local_counts[nearest]++;
     }
 }
 
-/* Update the centroids. Set the centroid of each cluster to the
-   barycenter of the points. Returns the maximum shift, i.e., the
-   maximum difference between the (squared) old and new position of
-   all centroids. */
+/* aggiorna i centroidi. ogni processo somma localmente i propri punti nei new_centroids,
+* con MPI_REDUCE so ottiene nel processo master la somma globale di tutti i punti
+* per ogni cluster.
+* il master divide ogni somma per il numero di putni del cluster e viene calcolato
+ * quanto si è spostato ogni centroide.
+* spostamento massimo viene mandato a tutti i processi con un MPI_Bcast. */
 float update_centroids(int my_size, int my_rank)
+
+//azzeramento del buffer dei nuovi centroidi
 {
-    for (int j = 0; j < n_clusters; j++)
-    {
+    for (int j = 0; j < n_clusters; j++){
         vzero(&new_centroids[IDX(j, 0)]);
     }
-
-    for (int i = 0; i < my_size; i++)
-    {
+//somma locale
+    for (int i = 0; i < my_size; i++){
         vadd(&new_centroids[IDX(local_cluster_of[i], 0)], &local_data[IDX(i, 0)]);
     }
 
-    /* Computes the global sum of each cluster middle point */
+    //somma di tutti i centrodi. solamente il master riceve il risultato finale
     if (my_rank == MASTER)
     {
         MPI_Reduce(
@@ -247,22 +251,14 @@ float update_centroids(int my_size, int my_rank)
             MPI_COMM_WORLD);     /* communicator */
     }
 
-    /**
-     * USE OF IN-PLACE OPTION (source "man MPI_Reduce")
-     * When  the communicator is an intracommunicator, you can perform a reduce operation in-place (the output buffer is used as the input buffer).  Use
-     * the variable MPI_IN_PLACE as the value of the root process sendbuf.  In this case, the input data is taken at the root from the  receive  buffer,
-     * where it will be replaced by the output data.
-     */
-
     float maxsqshift = 0.0f;
 
-    /* assuming a low number of cluster, parallelizing is not ideal for performances */
+    //il master calcola i nuovi centroidi e lo spostamento
     if (my_rank == MASTER)
     {
         for (int j = 0; j < n_clusters; j++)
         {
-            /* If a cluster is empty, we simply copy the old centroid to
-               the new one. */
+            //cluster vuoto? si lascia il vecchio centroide
             if (counts[j] == 0)
             {
                 vcopy(&new_centroids[IDX(j, 0)], &centroids[IDX(j, 0)]);
@@ -271,6 +267,7 @@ float update_centroids(int my_size, int my_rank)
             {
                 vmul(&new_centroids[IDX(j, 0)], 1.0f / counts[j]);
             }
+            //calcolo dello spsotamento del centroide rispetto al precedente
             const float sqshift = sqdist(&centroids[IDX(j, 0)], &new_centroids[IDX(j, 0)]);
             if (sqshift > maxsqshift)
                 maxsqshift = sqshift;
@@ -278,9 +275,7 @@ float update_centroids(int my_size, int my_rank)
         }
     }
 
-    /* The master computed maxsqshift; broadcast it so that every process
-       evaluates the same loop-termination condition. This collective also
-       synchronizes the processes, so no explicit MPI_Barrier is needed. */
+    //ogni processo deve sapere il valore di maxqshift per capire se il ciclo principale deve continuare o finire. uso Bcast per la sincronizzazione
     MPI_Bcast(&maxsqshift, 1, MPI_FLOAT, MASTER, MPI_COMM_WORLD);
     return maxsqshift;
 }
@@ -390,14 +385,16 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
 
+    if (argc != 4)
+    {
+        if (my_rank == MASTER)
+            fprintf(stderr, "Usage: %s K input_file output_file\n", argv[0]);
+        MPI_Finalize();
+        return EXIT_FAILURE;
+    }
+
     if (my_rank == MASTER)
     {
-        if (argc != 4)
-        {
-            fprintf(stderr, "Usage: %s K input_file output_file\n", argv[0]);
-            MPI_Abort(MPI_COMM_WORLD, MPI_ERR_IO);
-        }
-
         if ((inputf = fopen(argv[2], "r")) == NULL)
         {
             fprintf(stderr, "FATAL: can not open input file \"%s\"\n", argv[2]);
@@ -475,8 +472,8 @@ int main(int argc, char *argv[])
         init_centroids();
     }
 
-    // /* Create the displs and sendCount arrays for the scatterv/gatherv */
-    // /* Gather displacements */
+    /* vengono raccolte le informazioni di displs e sendCounts per poter fare
+    una Scatterv corretta */
     MPI_Gather(&my_start,     /* Send buffer */
                1,             /* Item sent count */
                MPI_INT,       /* Item data type */
@@ -487,7 +484,6 @@ int main(int argc, char *argv[])
                MPI_COMM_WORLD /* Communicator */
     );
 
-    /* Gather sendCounts */
     MPI_Gather(&my_size,      /* Send buffer */
                1,             /* Item sent count */
                MPI_INT,       /* Item data type */
@@ -498,7 +494,7 @@ int main(int argc, char *argv[])
                MPI_COMM_WORLD /* Communicator */
     );
 
-    /* Scatter to each node the points */
+    /* distribuzione dei punti */
     MPI_Scatterv(
         data,
         sendCounts,
@@ -516,23 +512,23 @@ int main(int argc, char *argv[])
 
     double tstart = 0.0;
 
+    MPI_Barrier(MPI_COMM_WORLD); //sicrnonizzazione prima di iniziare il timing
+
     if (my_rank == MASTER)
         tstart = hpc_gettime();
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    do
-    {
-        /* Sends the current centroids to every process */
+    do    {
+        //tutti i processi devono avere gli stessi centroidi
         MPI_Bcast(
             centroids,       /* send buffer */
             clusters_dim,    /* count */
             MPI_FLOAT,       /* data type */
             MASTER,          /* root */
-            MPI_COMM_WORLD); /* communicator */
+            MPI_COMM_WORLD);
 
-        classify(my_points, my_rank); /* Divide by n_dims to get the number of points */
+		//ogni processo classifica i propri punti
+        classify(my_points, my_rank);
 
-        /* Calculates the number of points in each cluster */
+		//somma dei conteggi locali
         MPI_Reduce(
             local_counts,  /* send buffer */
             counts,        /* receive buffer */
@@ -543,8 +539,11 @@ int main(int argc, char *argv[])
             MPI_COMM_WORLD /* communicator */
         );
 
+
+        //calcolo dei nuovi centroidi e dello spostamento massimo
         maxsqshift = update_centroids(my_points, my_rank);
-        // printf("Iteration %3d, maxsqshift = %f\n", iter, maxsqshift);
+        if (my_rank == MASTER)
+            printf("Iteration %3d, maxsqshift = %f\n", iter, maxsqshift);
         iter++;
     } while ((maxsqshift > TOL * TOL) && (iter <= MAXITER));
 
@@ -554,7 +553,7 @@ int main(int argc, char *argv[])
         printf("\nMain loop completed\n");
         printf("Execution time %.3f\n\n", elapsed);
 
-        /* Update displacement and sendcount arrays to gather cluster_of arrays */
+
         for (int i = 0; i < comm_sz; i++)
         {
             sendCounts[i] /= n_dims;
@@ -562,7 +561,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // To save results, gather cluster_of from all threads.
+    //raccolta dei processi
     MPI_Gatherv(
         local_cluster_of,
         my_points,
@@ -576,10 +575,12 @@ int main(int argc, char *argv[])
 
     if (my_rank == MASTER)
     {
+      //scrittura dei centroidi
         save_results(outputf);
         fclose(outputf);
     }
 
+    //liberazione della memoria
     free(local_data);
     free(local_cluster_of);
     free(centroids);

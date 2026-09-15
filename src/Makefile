@@ -14,7 +14,7 @@ EXES:=k-means omp-k-means inputgen
 
 ALL: $(EXES)
 
-omp-k-means: omp-k-means.c
+omp-k-means: omp-k-means-old.c
 	$(CC) $(CFLAGS) omp-k-means.c -o omp-k-means
 
 demo:
