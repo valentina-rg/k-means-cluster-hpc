@@ -1,3 +1,8 @@
+//Autore: Valentina Rigato matricola: matricola: 1027266
+//
+//
+//
+
 /****************************************************************************
  *
  * mpi-k-means.c -- MPI implementation of the K-Means clustering algorithm.
